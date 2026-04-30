@@ -27,10 +27,76 @@ export const getUsersForSidebar = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/messages/:id?limit=30&before=<ISO timestamp>
+ * Cursor-based pagination: returns messages oldest-first.
+ * Pass `before` (the createdAt of the oldest currently-loaded message)
+ * to fetch the next page of older messages.
+ */
 export const getMessages = async (req, res) => {
   try {
     const { id: userToChatId } = req.params;
     const myId = req.user._id;
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const before = req.query.before ? new Date(req.query.before) : null;
+
+    const query = {
+      $or: [
+        { senderId: myId, receiverId: userToChatId },
+        { senderId: userToChatId, receiverId: myId },
+      ],
+      isDelivered: true,
+      // Exclude messages soft-deleted by this user
+      deletedFor: { $ne: myId },
+    };
+
+    // Cursor: load messages older than `before`
+    if (before) {
+      query.createdAt = { $lt: before };
+    }
+
+    const messages = await Message.find(query)
+      .sort({ createdAt: -1 })  // newest first for the slice
+      .limit(limit)
+      .lean();
+
+    // Return in chronological order (oldest first) for rendering
+    messages.reverse();
+
+    // Tell the client if there are more messages to load
+    const totalCount = await Message.countDocuments({
+      $or: [
+        { senderId: myId, receiverId: userToChatId },
+        { senderId: userToChatId, receiverId: myId },
+      ],
+      isDelivered: true,
+      deletedFor: { $ne: myId },
+      ...(before ? { createdAt: { $lt: before } } : {}),
+    });
+
+    res.status(200).json({
+      messages,
+      hasMore: totalCount > limit,
+    });
+  } catch (error) {
+    console.log("Error in getMessages controller: ", error.message);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+/**
+ * GET /api/messages/search/:id?q=<term>
+ * Search message text in a conversation.
+ */
+export const searchMessages = async (req, res) => {
+  try {
+    const { id: userToChatId } = req.params;
+    const myId = req.user._id;
+    const { q } = req.query;
+
+    if (!q || q.trim().length === 0) {
+      return res.status(400).json({ error: "Search query is required" });
+    }
 
     const messages = await Message.find({
       $or: [
@@ -38,12 +104,75 @@ export const getMessages = async (req, res) => {
         { senderId: userToChatId, receiverId: myId },
       ],
       isDelivered: true,
-    });
+      deletedFor: { $ne: myId },
+      text: { $regex: q.trim(), $options: "i" },
+    })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
 
     res.status(200).json(messages);
   } catch (error) {
-    console.log("Error in getMessages controller: ", error.message);
+    console.log("Error in searchMessages:", error.message);
     res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+/**
+ * DELETE /api/messages/:messageId?deleteFor=me|everyone
+ * Soft-delete: adds caller's userId to message.deletedFor.
+ * deleteFor=everyone only works if the caller is the sender.
+ */
+export const deleteMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const userId = req.user._id;
+    const deleteForEveryone = req.query.deleteFor === "everyone";
+
+    const message = await Message.findById(messageId);
+    if (!message) return res.status(404).json({ message: "Message not found" });
+
+    if (deleteForEveryone) {
+      // Only the sender can delete for everyone
+      if (message.senderId.toString() !== userId.toString()) {
+        return res.status(403).json({ message: "Only the sender can delete for everyone" });
+      }
+      // Add both users to deletedFor
+      const participants = [message.senderId, message.receiverId].filter(Boolean);
+      for (const uid of participants) {
+        if (!message.deletedFor.map(String).includes(uid.toString())) {
+          message.deletedFor.push(uid);
+        }
+      }
+    } else {
+      // Delete only for current user
+      if (!message.deletedFor.map(String).includes(userId.toString())) {
+        message.deletedFor.push(userId);
+      }
+    }
+
+    await message.save();
+
+    // Notify the other participant via socket
+    const otherUserId =
+      message.senderId.toString() === userId.toString()
+        ? message.receiverId?.toString()
+        : message.senderId.toString();
+
+    if (otherUserId && deleteForEveryone) {
+      const socketId = getReceiverSocketId(otherUserId);
+      if (socketId) {
+        io.to(socketId).emit("messageDeleted", {
+          messageId,
+          deletedFor: "everyone",
+        });
+      }
+    }
+
+    res.status(200).json({ success: true, messageId, deletedFor: deleteForEveryone ? "everyone" : "me" });
+  } catch (error) {
+    console.log("Error in deleteMessage:", error.message);
+    res.status(500).json({ message: "Failed to delete message" });
   }
 };
 
@@ -238,3 +367,5 @@ export const toggleReaction = async (req, res) => {
     res.status(500).json({ message: "Failed to toggle reaction" });
   }
 };
+
+

@@ -9,7 +9,11 @@ export const useChatStore = create((set, get) => ({
   selectedUser: null,
   isUsersLoading: false,
   isMessagesLoading: false,
-  typingUser: null, // userId of the person currently typing to me
+  isLoadingMore: false,
+  hasMoreMessages: false,
+  typingUser: null,
+  searchResults: [],
+  isSearching: false,
 
   // Group state
   groups: [],
@@ -31,14 +35,78 @@ export const useChatStore = create((set, get) => ({
   },
 
   getMessages: async (userId) => {
-    set({ isMessagesLoading: true });
+    set({ isMessagesLoading: true, hasMoreMessages: false });
     try {
       const res = await axiosInstance.get(`/messages/${userId}`);
-      set({ messages: res.data });
+      // New API returns { messages, hasMore }
+      const data = res.data;
+      if (data && Array.isArray(data.messages)) {
+        set({ messages: data.messages, hasMoreMessages: data.hasMore });
+      } else {
+        // Fallback for old shape (plain array)
+        set({ messages: Array.isArray(data) ? data : [] });
+      }
     } catch (error) {
       toast.error(error.response?.data?.message || "Failed to load messages");
     } finally {
       set({ isMessagesLoading: false });
+    }
+  },
+
+  // Load the next page of older messages (cursor-based)
+  loadMoreMessages: async () => {
+    const { messages, selectedUser, isLoadingMore } = get();
+    if (isLoadingMore || !selectedUser || messages.length === 0) return;
+    set({ isLoadingMore: true });
+    try {
+      const oldest = messages[0]?.createdAt;
+      const res = await axiosInstance.get(
+        `/messages/${selectedUser._id}?before=${encodeURIComponent(oldest)}`
+      );
+      const data = res.data;
+      const older = Array.isArray(data.messages) ? data.messages : [];
+      set({
+        messages: [...older, ...messages],
+        hasMoreMessages: data.hasMore,
+      });
+    } catch (error) {
+      toast.error("Failed to load older messages");
+    } finally {
+      set({ isLoadingMore: false });
+    }
+  },
+
+  // Search messages in the current conversation
+  searchMessages: async (query) => {
+    const { selectedUser } = get();
+    if (!selectedUser || !query.trim()) {
+      set({ searchResults: [], isSearching: false });
+      return;
+    }
+    set({ isSearching: true });
+    try {
+      const res = await axiosInstance.get(
+        `/messages/search/${selectedUser._id}?q=${encodeURIComponent(query)}`
+      );
+      set({ searchResults: res.data });
+    } catch (error) {
+      toast.error("Search failed");
+    } finally {
+      set({ isSearching: false });
+    }
+  },
+
+  clearSearch: () => set({ searchResults: [], isSearching: false }),
+
+  // Delete a message (soft-delete)
+  deleteMessage: async (messageId, deleteForEveryone = false) => {
+    try {
+      await axiosInstance.delete(
+        `/messages/${messageId}?deleteFor=${deleteForEveryone ? "everyone" : "me"}`
+      );
+      set({ messages: get().messages.filter((m) => m._id !== messageId) });
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to delete message");
     }
   },
 
@@ -293,6 +361,11 @@ export const useChatStore = create((set, get) => ({
         set({ typingUser: null });
       }
     });
+
+    // Real-time delete
+    socket.on("messageDeleted", ({ messageId }) => {
+      set({ messages: get().messages.filter((m) => m._id !== messageId) });
+    });
   },
 
   unsubscribeFromMessages: () => {
@@ -302,8 +375,15 @@ export const useChatStore = create((set, get) => ({
     socket.off("scheduledMessageDelivered");
     socket.off("typing");
     socket.off("stopTyping");
+    socket.off("messageDeleted");
     set({ typingUser: null });
   },
 
-  setSelectedUser: (selectedUser) => set({ selectedUser, selectedGroup: null }), // Clear group selection
+  setSelectedUser: (selectedUser) => set({
+    selectedUser,
+    selectedGroup: null,
+    messages: [],
+    hasMoreMessages: false,
+    searchResults: [],
+  }),
 }));

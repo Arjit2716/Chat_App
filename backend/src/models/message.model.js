@@ -78,7 +78,7 @@ const messageSchema = new mongoose.Schema(
       default: "",
     },
     fileType: {
-      type: String, // 'image', 'document', 'code', 'archive', etc.
+      type: String,
       default: "",
     },
     // Code Sharing
@@ -90,10 +90,22 @@ const messageSchema = new mongoose.Schema(
       type: String,
       default: "javascript",
     },
+    // Soft delete — stores user IDs who deleted this message for themselves
+    deletedFor: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { timestamps: true }
 );
 
+// Index for fast conversation history queries
+messageSchema.index({ senderId: 1, receiverId: 1, createdAt: -1 });
+messageSchema.index({ receiverId: 1, senderId: 1, createdAt: -1 });
+
 const Message = mongoose.model("Message", messageSchema);
 
 export default Message;
+
