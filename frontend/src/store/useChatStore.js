@@ -9,6 +9,7 @@ export const useChatStore = create((set, get) => ({
   selectedUser: null,
   isUsersLoading: false,
   isMessagesLoading: false,
+  typingUser: null, // userId of the person currently typing to me
 
   // Group state
   groups: [],
@@ -57,6 +58,23 @@ export const useChatStore = create((set, get) => ({
     const authUser = useAuthStore.getState().authUser;
     if (socket && senderId) {
       socket.emit("markAsSeen", { senderId, receiverId: authUser._id });
+    }
+  },
+
+  // Emit typing events to the selected user
+  emitTyping: () => {
+    const { selectedUser } = get();
+    const socket = useAuthStore.getState().socket;
+    if (socket && selectedUser) {
+      socket.emit("typing", { to: selectedUser._id });
+    }
+  },
+
+  emitStopTyping: () => {
+    const { selectedUser } = get();
+    const socket = useAuthStore.getState().socket;
+    if (socket && selectedUser) {
+      socket.emit("stopTyping", { to: selectedUser._id });
     }
   },
 
@@ -234,7 +252,8 @@ export const useChatStore = create((set, get) => ({
     socket.on("newMessage", (newMessage) => {
       const isMessageSentFromSelectedUser = newMessage.senderId === selectedUser._id;
       if (!isMessageSentFromSelectedUser) return;
-      set({ messages: [...get().messages, newMessage] });
+      // Clear typing indicator when a message arrives
+      set({ messages: [...get().messages, newMessage], typingUser: null });
     });
 
     socket.on("messagesSeen", ({ by }) => {
@@ -261,6 +280,19 @@ export const useChatStore = create((set, get) => ({
         set({ messages: [...get().messages, message] });
       }
     });
+
+    // Typing indicator listeners
+    socket.on("typing", ({ from }) => {
+      if (from === selectedUser._id) {
+        set({ typingUser: from });
+      }
+    });
+
+    socket.on("stopTyping", ({ from }) => {
+      if (from === selectedUser._id) {
+        set({ typingUser: null });
+      }
+    });
   },
 
   unsubscribeFromMessages: () => {
@@ -268,6 +300,9 @@ export const useChatStore = create((set, get) => ({
     socket.off("newMessage");
     socket.off("messagesSeen");
     socket.off("scheduledMessageDelivered");
+    socket.off("typing");
+    socket.off("stopTyping");
+    set({ typingUser: null });
   },
 
   setSelectedUser: (selectedUser) => set({ selectedUser, selectedGroup: null }), // Clear group selection

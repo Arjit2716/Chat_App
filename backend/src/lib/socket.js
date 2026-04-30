@@ -95,6 +95,22 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ---- Typing Indicators ----
+
+  socket.on("typing", ({ to }) => {
+    const receiverSocketId = getReceiverSocketId(to);
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("typing", { from: userId });
+    }
+  });
+
+  socket.on("stopTyping", ({ to }) => {
+    const receiverSocketId = getReceiverSocketId(to);
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("stopTyping", { from: userId });
+    }
+  });
+
   // ICE candidate exchange
   socket.on("iceCandidate", ({ to, candidate }) => {
     const receiverSocketId = getReceiverSocketId(to);

@@ -4,6 +4,8 @@ import { Image, Send, X, Clock, Paperclip, Code2, FileText } from "lucide-react"
 import toast from "react-hot-toast";
 import ScheduleMessageModal from "./ScheduleMessageModal";
 
+const TYPING_STOP_DELAY = 1500; // ms
+
 const MessageInput = () => {
   const [text, setText] = useState("");
   const [imagePreview, setImagePreview] = useState(null);
@@ -19,7 +21,9 @@ const MessageInput = () => {
   const [showSchedule, setShowSchedule] = useState(false);
   const fileInputRef = useRef(null);
   const genericFileInputRef = useRef(null);
-  const { sendMessage } = useChatStore();
+  const typingTimeoutRef = useRef(null);
+  const isTypingRef = useRef(false);
+  const { sendMessage, emitTyping, emitStopTyping } = useChatStore();
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -74,6 +78,13 @@ const MessageInput = () => {
     e.preventDefault();
     if (!text.trim() && !imagePreview && !selectedFile) return;
 
+    // Stop typing indicator before sending
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    if (isTypingRef.current) {
+      emitStopTyping();
+      isTypingRef.current = false;
+    }
+
     try {
       await sendMessage({
         text: text.trim(),
@@ -92,6 +103,23 @@ const MessageInput = () => {
     } catch (error) {
       console.error("Failed to send message:", error);
     }
+  };
+
+  const handleTextChange = (e) => {
+    setText(e.target.value);
+
+    // Emit typing start (only once per typing session)
+    if (!isTypingRef.current) {
+      emitTyping();
+      isTypingRef.current = true;
+    }
+
+    // Reset the stop-typing debounce
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      emitStopTyping();
+      isTypingRef.current = false;
+    }, TYPING_STOP_DELAY);
   };
 
   const handleSendCodeSnippet = async () => {
@@ -157,7 +185,7 @@ const MessageInput = () => {
             className="w-full input input-bordered rounded-lg input-sm sm:input-md"
             placeholder="Type a message..."
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={handleTextChange}
           />
           <input
             type="file"

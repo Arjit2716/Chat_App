@@ -50,6 +50,7 @@ const ChatContainer = () => {
     subscribeToMessages,
     unsubscribeFromMessages,
     markMessagesSeen,
+    typingUser,
   } = useChatStore();
   const { authUser, socket } = useAuthStore();
   const messageEndRef = useRef(null);
@@ -117,7 +118,7 @@ const ChatContainer = () => {
     if (messageEndRef.current) {
       messageEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [localMessages]);
+  }, [localMessages, typingUser]);
 
   // Decrypt text if encrypted
   const getDisplayText = (message) => {
@@ -380,6 +381,34 @@ const ChatContainer = () => {
             </div>
           );
         })}
+
+        {/* Typing indicator */}
+        {typingUser === selectedUser._id && (
+          <div className="chat chat-start" ref={messageEndRef}>
+            <div className="chat-image avatar">
+              <div className="size-10 rounded-full border">
+                <img
+                  src={selectedUser.profilePic || "/avatar.png"}
+                  alt="typing"
+                />
+              </div>
+            </div>
+            <div className="chat-bubble flex items-center gap-1 py-3 px-4 min-h-0">
+              <span
+                className="w-2 h-2 rounded-full bg-current opacity-60 animate-bounce"
+                style={{ animationDelay: "0ms" }}
+              />
+              <span
+                className="w-2 h-2 rounded-full bg-current opacity-60 animate-bounce"
+                style={{ animationDelay: "150ms" }}
+              />
+              <span
+                className="w-2 h-2 rounded-full bg-current opacity-60 animate-bounce"
+                style={{ animationDelay: "300ms" }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <MessageInput />
