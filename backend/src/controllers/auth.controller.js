@@ -2,6 +2,9 @@ import { generateToken } from "../lib/utils.js";
 import User from "../models/user.model.js";
 import bcrypt from "bcryptjs";
 import cloudinary from "../lib/cloudinary.js";
+import { OAuth2Client } from "google-auth-library";
+
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 export const signup = async (req, res) => {
   const { fullName, email, password } = req.body;
@@ -32,12 +35,9 @@ export const signup = async (req, res) => {
       generateToken(newUser._id, res);
       await newUser.save();
 
-      res.status(201).json({
-        _id: newUser._id,
-        fullName: newUser.fullName,
-        email: newUser.email,
-        profilePic: newUser.profilePic,
-      });
+      // Return full user (minus password)
+      const savedUser = await User.findById(newUser._id).select("-password");
+      res.status(201).json(savedUser);
     } else {
       res.status(400).json({ message: "Invalid user data" });
     }
@@ -56,6 +56,10 @@ export const login = async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
+    if (user.authProvider === "google") {
+      return res.status(400).json({ message: "This account uses Google sign-in. Please use the Google button." });
+    }
+
     const isPasswordCorrect = await bcrypt.compare(password, user.password);
     if (!isPasswordCorrect) {
       return res.status(400).json({ message: "Invalid credentials" });
@@ -63,15 +67,60 @@ export const login = async (req, res) => {
 
     generateToken(user._id, res);
 
-    res.status(200).json({
-      _id: user._id,
-      fullName: user.fullName,
-      email: user.email,
-      profilePic: user.profilePic,
-    });
+    // Return full user (minus password)
+    const fullUser = await User.findById(user._id).select("-password");
+    res.status(200).json(fullUser);
   } catch (error) {
     console.log("Error in login controller", error.message);
     res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+
+export const googleAuth = async (req, res) => {
+  const { idToken } = req.body;
+  try {
+    if (!idToken) {
+      return res.status(400).json({ message: "Google ID token is required" });
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const { sub: googleId, email, name, picture } = payload;
+
+    let user = await User.findOne({ email });
+
+    if (user) {
+      if (!user.googleId) {
+        user.googleId = googleId;
+        user.authProvider = "google";
+        if (picture && !user.profilePic) {
+          user.profilePic = picture;
+        }
+        await user.save();
+      }
+    } else {
+      user = new User({
+        fullName: name,
+        email,
+        googleId,
+        authProvider: "google",
+        profilePic: picture || "",
+      });
+      await user.save();
+    }
+
+    generateToken(user._id, res);
+
+    // Return full user (minus password)
+    const fullUser = await User.findById(user._id).select("-password");
+    res.status(200).json(fullUser);
+  } catch (error) {
+    console.log("Error in googleAuth controller:", error.message);
+    res.status(500).json({ message: "Google authentication failed" });
   }
 };
 
@@ -87,24 +136,58 @@ export const logout = (req, res) => {
 
 export const updateProfile = async (req, res) => {
   try {
-    const { profilePic } = req.body;
+    const { profilePic, fullName } = req.body;
     const userId = req.user._id;
 
-    if (!profilePic) {
-      return res.status(400).json({ message: "Profile pic is required" });
+    const update = {};
+
+    if (profilePic) {
+      const uploadResponse = await cloudinary.uploader.upload(profilePic);
+      update.profilePic = uploadResponse.secure_url;
     }
 
-    const uploadResponse = await cloudinary.uploader.upload(profilePic);
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      { profilePic: uploadResponse.secure_url },
-      { new: true }
-    );
+    if (fullName && fullName.trim().length > 0) {
+      update.fullName = fullName.trim();
+    }
+
+    // Developer profile fields
+    const { bio, title, skills, techStack, github, portfolio, experience } = req.body;
+    if (typeof bio === "string") update.bio = bio;
+    if (typeof title === "string") update.title = title.trim();
+    if (Array.isArray(skills)) update.skills = skills.map((s) => s.trim()).filter(Boolean);
+    if (Array.isArray(techStack)) update.techStack = techStack.map((s) => s.trim()).filter(Boolean);
+    if (typeof github === "string") update.github = github.trim();
+    if (typeof portfolio === "string") update.portfolio = portfolio.trim();
+    if (typeof experience === "string") update.experience = experience;
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ message: "Nothing to update" });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(userId, update, { new: true }).select("-password");
 
     res.status(200).json(updatedUser);
   } catch (error) {
     console.log("error in update profile:", error);
     res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const updatePrivacySettings = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { showLastSeen, preferredLanguage } = req.body;
+
+    const update = {};
+    if (typeof showLastSeen === "boolean") update.showLastSeen = showLastSeen;
+    if (typeof preferredLanguage === "string") update.preferredLanguage = preferredLanguage;
+
+    const user = await User.findByIdAndUpdate(userId, update, { new: true }).select("-password");
+
+    res.status(200).json(user);
+  } catch (error) {
+    console.log("Error in updatePrivacySettings:", error.message);
+    res.status(500).json({ message: "Failed to update privacy settings" });
   }
 };
 

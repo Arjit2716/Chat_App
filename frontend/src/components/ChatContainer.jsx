@@ -1,11 +1,45 @@
 import { useChatStore } from "../store/useChatStore";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import ChatHeader from "./ChatHeader";
 import MessageInput from "./MessageInput";
 import MessageSkeleton from "./skeletons/MessageSkeleton";
 import { useAuthStore } from "../store/useAuthStore";
 import { formatMessageTime } from "../lib/utils";
+import { getSharedKey, decryptMessage } from "../lib/encryption";
+import TranslateButton from "./TranslateButton";
+import {
+  Bot,
+  ShieldAlert,
+  Check,
+  CheckCheck,
+  Lock,
+  Pencil,
+  SmilePlus,
+  X,
+  Loader2,
+  FileText,
+  Download,
+} from "lucide-react";
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { axiosInstance } from "../lib/axios";
+import toast from "react-hot-toast";
+
+const EMOJI_LIST = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉"];
+
+// Message status tick component
+const MessageStatus = ({ status, isSent }) => {
+  if (!isSent) return null;
+  switch (status) {
+    case "seen":
+      return <CheckCheck className="w-4 h-4 text-blue-500" />;
+    case "delivered":
+      return <CheckCheck className="w-4 h-4 text-base-content/40" />;
+    default:
+      return <Check className="w-4 h-4 text-base-content/40" />;
+  }
+};
 
 const ChatContainer = () => {
   const {
@@ -15,23 +49,117 @@ const ChatContainer = () => {
     selectedUser,
     subscribeToMessages,
     unsubscribeFromMessages,
+    markMessagesSeen,
   } = useChatStore();
-  const { authUser } = useAuthStore();
+  const { authUser, socket } = useAuthStore();
   const messageEndRef = useRef(null);
+
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [showEmojiFor, setShowEmojiFor] = useState(null);
+  const [localMessages, setLocalMessages] = useState([]);
+
+  // Shared encryption key
+  const sharedKey = getSharedKey(authUser._id, selectedUser._id);
 
   useEffect(() => {
     getMessages(selectedUser._id);
-
     subscribeToMessages();
-
+    markMessagesSeen(selectedUser._id);
     return () => unsubscribeFromMessages();
-  }, [selectedUser._id, getMessages, subscribeToMessages, unsubscribeFromMessages]);
+  }, [selectedUser._id]);
+
+  // Sync localMessages from store messages
+  useEffect(() => {
+    setLocalMessages(messages);
+  }, [messages]);
+
+  // Mark as seen on new messages
+  useEffect(() => {
+    if (localMessages.length > 0) {
+      const hasUnseen = localMessages.some(
+        (msg) => msg.senderId === selectedUser._id && msg.status !== "seen"
+      );
+      if (hasUnseen) markMessagesSeen(selectedUser._id);
+    }
+  }, [localMessages, selectedUser._id]);
+
+  // Listen for edit and reaction events
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleEdit = ({ messageId, text, editedAt }) => {
+      setLocalMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === messageId ? { ...msg, text, editedAt } : msg
+        )
+      );
+    };
+
+    const handleReaction = ({ messageId, reactions }) => {
+      setLocalMessages((prev) =>
+        prev.map((msg) =>
+          msg._id === messageId ? { ...msg, reactions } : msg
+        )
+      );
+    };
+
+    socket.on("messageEdited", handleEdit);
+    socket.on("reactionUpdated", handleReaction);
+
+    return () => {
+      socket.off("messageEdited", handleEdit);
+      socket.off("reactionUpdated", handleReaction);
+    };
+  }, [socket]);
 
   useEffect(() => {
-    if (messageEndRef.current && messages) {
+    if (messageEndRef.current) {
       messageEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages]);
+  }, [localMessages]);
+
+  // Decrypt text if encrypted
+  const getDisplayText = (message) => {
+    if (!message.text) return null;
+    if (message.isEncrypted) {
+      return decryptMessage(message.text, sharedKey);
+    }
+    return message.text;
+  };
+
+  // Handle edit
+  const startEdit = (message) => {
+    setEditingId(message._id);
+    setEditText(message.isEncrypted ? decryptMessage(message.text, sharedKey) : message.text);
+  };
+
+  const saveEdit = async () => {
+    if (!editText.trim()) return;
+    try {
+      const res = await axiosInstance.put(`/messages/edit/${editingId}`, { text: editText.trim() });
+      setLocalMessages((prev) =>
+        prev.map((msg) => (msg._id === editingId ? { ...msg, text: res.data.text, editedAt: res.data.editedAt } : msg))
+      );
+      setEditingId(null);
+      setEditText("");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to edit");
+    }
+  };
+
+  // Handle reaction
+  const toggleReaction = async (messageId, emoji) => {
+    try {
+      const res = await axiosInstance.post(`/messages/react/${messageId}`, { emoji });
+      setLocalMessages((prev) =>
+        prev.map((msg) => (msg._id === messageId ? { ...msg, reactions: res.data.reactions } : msg))
+      );
+      setShowEmojiFor(null);
+    } catch (error) {
+      toast.error("Failed to react");
+    }
+  };
 
   if (isMessagesLoading) {
     return (
@@ -48,41 +176,210 @@ const ChatContainer = () => {
       <ChatHeader />
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map((message) => (
-          <div
-            key={message._id}
-            className={`chat ${message.senderId === authUser._id ? "chat-end" : "chat-start"}`}
-            ref={messageEndRef}
-          >
-            <div className=" chat-image avatar">
-              <div className="size-10 rounded-full border">
-                <img
-                  src={
-                    message.senderId === authUser._id
-                      ? authUser.profilePic || "/avatar.png"
-                      : selectedUser.profilePic || "/avatar.png"
-                  }
-                  alt="profile pic"
-                />
+        {/* E2E encryption notice */}
+        <div className="text-center">
+          <span className="inline-flex items-center gap-1 text-xs text-base-content/40 bg-base-200 px-3 py-1 rounded-full">
+            <Lock className="w-3 h-3" />
+            Messages are end-to-end encrypted
+          </span>
+        </div>
+
+        {localMessages.map((message) => {
+          const isSent = message.senderId === authUser._id;
+          const displayText = getDisplayText(message);
+
+          return (
+            <div
+              key={message._id}
+              className={`chat ${isSent ? "chat-end" : "chat-start"} group/msg`}
+              ref={messageEndRef}
+            >
+              <div className="chat-image avatar">
+                <div className="size-10 rounded-full border">
+                  <img
+                    src={
+                      isSent
+                        ? authUser.profilePic || "/avatar.png"
+                        : selectedUser.profilePic || "/avatar.png"
+                    }
+                    alt="profile"
+                  />
+                </div>
               </div>
-            </div>
-            <div className="chat-header mb-1">
-              <time className="text-xs opacity-50 ml-1">
-                {formatMessageTime(message.createdAt)}
-              </time>
-            </div>
-            <div className="chat-bubble flex flex-col">
-              {message.image && (
-                <img
-                  src={message.image}
-                  alt="Attachment"
-                  className="sm:max-w-[200px] rounded-md mb-2"
-                />
+
+              <div className="chat-header mb-1">
+                <time className="text-xs opacity-50 ml-1">
+                  {formatMessageTime(message.createdAt)}
+                </time>
+                {message.editedAt && (
+                  <span className="text-[10px] text-base-content/40 ml-1">(edited)</span>
+                )}
+                {message.isAutoReply && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-xs text-cyan-500 bg-cyan-500/10 px-2 py-0.5 rounded-full">
+                    <Bot className="w-3 h-3" /> AI Reply
+                  </span>
+                )}
+                {message.isSpam && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-xs text-red-500 bg-red-500/10 px-2 py-0.5 rounded-full">
+                    <ShieldAlert className="w-3 h-3" /> Spam
+                  </span>
+                )}
+              </div>
+
+              <div className="relative">
+                <div className={`chat-bubble flex flex-col ${message.isSpam ? "opacity-50" : ""}`}>
+                  {message.image && (
+                    <img
+                      src={message.image}
+                      alt="Attachment"
+                      className="sm:max-w-[200px] rounded-md mb-2"
+                    />
+                  )}
+
+                  {message.fileUrl && (
+                    <a 
+                      href={message.fileUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 bg-base-300 p-3 rounded-lg mb-2 hover:bg-base-200 transition-colors"
+                    >
+                      <FileText className="w-8 h-8 text-primary" />
+                      <div className="flex flex-col overflow-hidden">
+                        <span className="text-sm font-medium truncate max-w-[150px]">{message.fileName || "Download File"}</span>
+                        <span className="text-xs text-base-content/60 flex items-center gap-1 mt-1">
+                          <Download className="w-3 h-3" /> Click to download
+                        </span>
+                      </div>
+                    </a>
+                  )}
+
+                  {/* Edit mode or display */}
+                  {editingId === message._id ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        className="input input-xs input-bordered flex-1 bg-transparent"
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") saveEdit();
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                      />
+                      <button onClick={saveEdit} className="text-green-500">
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => setEditingId(null)} className="text-red-500">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : message.isCodeSnippet ? (
+                    <div className="rounded-md overflow-hidden my-1 border border-base-300 max-w-full">
+                      <div className="bg-base-300 px-3 py-1 text-xs font-mono text-base-content/70 flex justify-between items-center">
+                        <span>{message.language || "code"}</span>
+                      </div>
+                      <SyntaxHighlighter 
+                        language={message.language || "javascript"} 
+                        style={vscDarkPlus}
+                        customStyle={{ margin: 0, borderRadius: 0, fontSize: "0.85rem" }}
+                      >
+                        {displayText}
+                      </SyntaxHighlighter>
+                    </div>
+                  ) : (
+                    displayText && <p>{displayText}</p>
+                  )}
+
+                  {/* Time + status ticks inside bubble */}
+                  <div className="flex items-center justify-end gap-1 mt-1 -mb-1">
+                    <span className="text-[10px] opacity-50">
+                      {formatMessageTime(message.createdAt)}
+                    </span>
+                    {message.isEncrypted && <Lock className="w-3 h-3 text-green-500/50" />}
+                    <MessageStatus status={message.status} isSent={isSent} />
+                  </div>
+                </div>
+
+                {/* Hover actions (edit + emoji) */}
+                <div
+                  className={`absolute top-0 ${isSent ? "-left-16" : "-right-16"} opacity-0 group-hover/msg:opacity-100 transition-opacity flex gap-0.5`}
+                >
+                  {isSent && message.text && (
+                    <button
+                      onClick={() => startEdit(message)}
+                      className="btn btn-ghost btn-xs btn-circle"
+                      title="Edit"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowEmojiFor(showEmojiFor === message._id ? null : message._id)}
+                    className="btn btn-ghost btn-xs btn-circle"
+                    title="React"
+                  >
+                    <SmilePlus className="w-3 h-3" />
+                  </button>
+                </div>
+
+                {/* Emoji Picker */}
+                {showEmojiFor === message._id && (
+                  <div
+                    className={`absolute ${isSent ? "right-0" : "left-0"} -bottom-10 flex gap-1 bg-base-200 rounded-full px-2 py-1 shadow-lg z-10`}
+                  >
+                    {EMOJI_LIST.map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => toggleReaction(message._id, emoji)}
+                        className="hover:scale-125 transition-transform text-lg"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Reactions display */}
+              {message.reactions && message.reactions.length > 0 && (
+                <div className="chat-footer mt-0.5">
+                  <div className="flex gap-1 flex-wrap">
+                    {/* Group reactions by emoji */}
+                    {Object.entries(
+                      message.reactions.reduce((acc, r) => {
+                        acc[r.emoji] = (acc[r.emoji] || 0) + 1;
+                        return acc;
+                      }, {})
+                    ).map(([emoji, count]) => (
+                      <button
+                        key={emoji}
+                        onClick={() => toggleReaction(message._id, emoji)}
+                        className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs bg-base-200 hover:bg-base-300 transition-colors ${
+                          message.reactions.some(
+                            (r) => r.userId === authUser._id && r.emoji === emoji
+                          )
+                            ? "ring-1 ring-primary"
+                            : ""
+                        }`}
+                      >
+                        {emoji}
+                        {count > 1 && <span className="text-[10px]">{count}</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
-              {message.text && <p>{message.text}</p>}
+
+              {/* Translate button */}
+              {displayText && !editingId && (
+                <div className="chat-footer mt-1">
+                  <TranslateButton messageId={message._id} originalText={displayText} />
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <MessageInput />

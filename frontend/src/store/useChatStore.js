@@ -10,13 +10,20 @@ export const useChatStore = create((set, get) => ({
   isUsersLoading: false,
   isMessagesLoading: false,
 
+  // Group state
+  groups: [],
+  selectedGroup: null,
+  groupMessages: [],
+  isGroupsLoading: false,
+  isGroupMessagesLoading: false,
+
   getUsers: async () => {
     set({ isUsersLoading: true });
     try {
       const res = await axiosInstance.get("/messages/users");
       set({ users: res.data });
     } catch (error) {
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || "Failed to load users");
     } finally {
       set({ isUsersLoading: false });
     }
@@ -28,20 +35,195 @@ export const useChatStore = create((set, get) => ({
       const res = await axiosInstance.get(`/messages/${userId}`);
       set({ messages: res.data });
     } catch (error) {
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || "Failed to load messages");
     } finally {
       set({ isMessagesLoading: false });
     }
   },
+
   sendMessage: async (messageData) => {
     const { selectedUser, messages } = get();
     try {
       const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, messageData);
       set({ messages: [...messages, res.data] });
     } catch (error) {
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || "Failed to send message");
     }
   },
+
+  // Mark messages from a sender as seen
+  markMessagesSeen: (senderId) => {
+    const socket = useAuthStore.getState().socket;
+    const authUser = useAuthStore.getState().authUser;
+    if (socket && senderId) {
+      socket.emit("markAsSeen", { senderId, receiverId: authUser._id });
+    }
+  },
+
+  // ---- GROUP ACTIONS ----
+
+  getGroups: async () => {
+    set({ isGroupsLoading: true });
+    try {
+      const res = await axiosInstance.get("/groups/my-groups");
+      set({ groups: res.data });
+    } catch (error) {
+      console.error("Failed to load groups:", error);
+    } finally {
+      set({ isGroupsLoading: false });
+    }
+  },
+
+  createGroup: async (data) => {
+    try {
+      const res = await axiosInstance.post("/groups/create", data);
+      set({ groups: [res.data, ...get().groups] });
+      toast.success("Group created!");
+      return res.data;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to create group");
+    }
+  },
+
+  getGroupMessages: async (groupId) => {
+    set({ isGroupMessagesLoading: true });
+    try {
+      const res = await axiosInstance.get(`/groups/${groupId}/messages`);
+      set({ groupMessages: res.data });
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to load messages");
+    } finally {
+      set({ isGroupMessagesLoading: false });
+    }
+  },
+
+  sendGroupMessage: async (messageData) => {
+    const { selectedGroup, groupMessages } = get();
+    try {
+      const res = await axiosInstance.post(`/groups/${selectedGroup._id}/messages`, messageData);
+      set({ groupMessages: [...groupMessages, res.data] });
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to send");
+    }
+  },
+
+  // ---- PROJECT TASKS ----
+  addTask: async (taskData) => {
+    const { selectedGroup, groups } = get();
+    if (!selectedGroup) return;
+    try {
+      const res = await axiosInstance.post(`/groups/${selectedGroup._id}/tasks`, taskData);
+      set({ selectedGroup: res.data });
+      set({ groups: groups.map((g) => (g._id === res.data._id ? res.data : g)) });
+      toast.success("Task added");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to add task");
+    }
+  },
+
+  updateTaskStatus: async (taskId, status) => {
+    const { selectedGroup, groups } = get();
+    if (!selectedGroup) return;
+    try {
+      const res = await axiosInstance.put(`/groups/${selectedGroup._id}/tasks/${taskId}`, { status });
+      set({ selectedGroup: res.data });
+      set({ groups: groups.map((g) => (g._id === res.data._id ? res.data : g)) });
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to update task");
+    }
+  },
+
+  deleteTask: async (taskId) => {
+    const { selectedGroup, groups } = get();
+    if (!selectedGroup) return;
+    try {
+      const res = await axiosInstance.delete(`/groups/${selectedGroup._id}/tasks/${taskId}`);
+      set({ selectedGroup: res.data });
+      set({ groups: groups.map((g) => (g._id === res.data._id ? res.data : g)) });
+      toast.success("Task deleted");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to delete task");
+    }
+  },
+
+  setSelectedGroup: (group) => {
+    set({ selectedGroup: group, selectedUser: null }); // Clear DM selection
+  },
+
+  subscribeToGroupMessages: () => {
+    const { selectedGroup } = get();
+    if (!selectedGroup) return;
+
+    const socket = useAuthStore.getState().socket;
+
+    socket.on("newGroupMessage", ({ groupId, message }) => {
+      if (groupId === selectedGroup._id) {
+        set({ groupMessages: [...get().groupMessages, message] });
+      }
+    });
+  },
+
+  unsubscribeFromGroupMessages: () => {
+    const socket = useAuthStore.getState().socket;
+    socket.off("newGroupMessage");
+  },
+
+  // ---- AI FEATURES ----
+
+  summarizeChat: async (userId) => {
+    try {
+      const res = await axiosInstance.post(`/ai/summarize/${userId}`);
+      return res.data.summary;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to summarize");
+      return null;
+    }
+  },
+
+  translateMessage: async (messageId, targetLanguage) => {
+    try {
+      const res = await axiosInstance.post(`/ai/translate/${messageId}`, { targetLanguage });
+      return res.data.translatedText;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Translation failed");
+      return null;
+    }
+  },
+
+  // ---- SCHEDULING ----
+
+  scheduleMessage: async (messageData) => {
+    const { selectedUser } = get();
+    try {
+      const res = await axiosInstance.post(`/schedule/send/${selectedUser._id}`, messageData);
+      toast.success("Message scheduled!");
+      return res.data;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to schedule");
+      throw error;
+    }
+  },
+
+  getScheduledMessages: async () => {
+    try {
+      const res = await axiosInstance.get("/schedule");
+      return res.data;
+    } catch (error) {
+      console.error("Failed to get scheduled messages:", error);
+      return [];
+    }
+  },
+
+  cancelScheduledMessage: async (messageId) => {
+    try {
+      await axiosInstance.delete(`/schedule/${messageId}`);
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to cancel");
+      throw error;
+    }
+  },
+
+  // ---- DM SUBSCRIPTIONS ----
 
   subscribeToMessages: () => {
     const { selectedUser } = get();
@@ -52,17 +234,41 @@ export const useChatStore = create((set, get) => ({
     socket.on("newMessage", (newMessage) => {
       const isMessageSentFromSelectedUser = newMessage.senderId === selectedUser._id;
       if (!isMessageSentFromSelectedUser) return;
+      set({ messages: [...get().messages, newMessage] });
+    });
 
-      set({
-        messages: [...get().messages, newMessage],
-      });
+    socket.on("messagesSeen", ({ by }) => {
+      if (by === selectedUser._id) {
+        const updatedMessages = get().messages.map((msg) => {
+          if (
+            msg.senderId === useAuthStore.getState().authUser._id &&
+            msg.receiverId === selectedUser._id &&
+            msg.status !== "seen"
+          ) {
+            return { ...msg, status: "seen" };
+          }
+          return msg;
+        });
+        set({ messages: updatedMessages });
+      }
+    });
+
+    socket.on("scheduledMessageDelivered", (message) => {
+      if (
+        message.receiverId === selectedUser._id ||
+        message.senderId === selectedUser._id
+      ) {
+        set({ messages: [...get().messages, message] });
+      }
     });
   },
 
   unsubscribeFromMessages: () => {
     const socket = useAuthStore.getState().socket;
     socket.off("newMessage");
+    socket.off("messagesSeen");
+    socket.off("scheduledMessageDelivered");
   },
 
-  setSelectedUser: (selectedUser) => set({ selectedUser }),
+  setSelectedUser: (selectedUser) => set({ selectedUser, selectedGroup: null }), // Clear group selection
 }));

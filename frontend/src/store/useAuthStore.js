@@ -57,6 +57,20 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
+  googleAuth: async (idToken) => {
+    set({ isLoggingIn: true });
+    try {
+      const res = await axiosInstance.post("/auth/google", { idToken });
+      set({ authUser: res.data });
+      toast.success("Signed in with Google successfully");
+      get().connectSocket();
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Google sign-in failed");
+    } finally {
+      set({ isLoggingIn: false });
+    }
+  },
+
   logout: async () => {
     try {
       await axiosInstance.post("/auth/logout");
@@ -76,9 +90,29 @@ export const useAuthStore = create((set, get) => ({
       toast.success("Profile updated successfully");
     } catch (error) {
       console.log("error in update profile:", error);
-      toast.error(error.response.data.message);
+      toast.error(error.response?.data?.message || "Failed to update profile");
     } finally {
       set({ isUpdatingProfile: false });
+    }
+  },
+
+  updatePrivacySettings: async (data) => {
+    try {
+      const res = await axiosInstance.put("/auth/privacy-settings", data);
+      set({ authUser: res.data });
+      toast.success("Settings updated");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to update settings");
+    }
+  },
+
+  updateAutoReply: async (data) => {
+    try {
+      const res = await axiosInstance.put("/ai/auto-reply", data);
+      set({ authUser: res.data });
+      toast.success("Auto-reply settings updated");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Failed to update auto-reply");
     }
   },
 
