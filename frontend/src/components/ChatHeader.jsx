@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { X, Sparkles, Phone, Video, Lock } from "lucide-react";
+import { X, Sparkles, Phone, Video, Lock, ArrowLeft } from "lucide-react";
 import { useAuthStore } from "../store/useAuthStore";
 import { useChatStore } from "../store/useChatStore";
 import ChatSummaryModal from "./ChatSummaryModal";
 
-const ChatHeader = () => {
+const ChatHeader = ({ onBack }) => {
   const { selectedUser, setSelectedUser, summarizeChat } = useChatStore();
   const { onlineUsers } = useAuthStore();
   const [showSummary, setShowSummary] = useState(false);
@@ -57,6 +57,17 @@ const ChatHeader = () => {
       <div className="p-2.5 border-b border-base-300">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
+            {/* Mobile back button */}
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="lg:hidden btn btn-ghost btn-sm btn-circle"
+                title="Back"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
+
             {/* Avatar */}
             <div className="avatar">
               <div className="size-10 rounded-full relative">

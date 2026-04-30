@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import MessageSkeleton from "./skeletons/MessageSkeleton";
 import { useAuthStore } from "../store/useAuthStore";
 import { formatMessageTime } from "../lib/utils";
-import { Settings, Send, Image, X, Users, MessageSquare, CheckSquare, Code2, FileText, Download } from "lucide-react";
+import { Settings, Send, Image, X, Users, MessageSquare, CheckSquare, Code2, FileText, Download, ArrowLeft } from "lucide-react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import GroupSettings from "./GroupSettings";
@@ -11,7 +11,7 @@ import ProjectTasks from "./ProjectTasks";
 import LiveCodePad from "./LiveCodePad";
 import toast from "react-hot-toast";
 
-const GroupChatContainer = () => {
+const GroupChatContainer = ({ onBack }) => {
   const {
     groupMessages,
     getGroupMessages,
@@ -104,6 +104,16 @@ const GroupChatContainer = () => {
       <div className="p-2.5 border-b border-base-300">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
+            {/* Mobile back button */}
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="lg:hidden btn btn-ghost btn-sm btn-circle"
+                title="Back"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
             <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold text-lg">
               {selectedGroup?.name?.charAt(0).toUpperCase()}
             </div>
@@ -115,25 +125,28 @@ const GroupChatContainer = () => {
             </div>
           </div>
           
-          {/* Tabs */}
-          <div className="flex bg-base-200 rounded-lg p-1">
+          {/* Tabs — scrollable on small screens */}
+          <div className="flex bg-base-200 rounded-lg p-1 overflow-x-auto shrink-0">
             <button
               onClick={() => setActiveTab("chat")}
-              className={`btn btn-sm btn-ghost gap-1 px-3 ${activeTab === "chat" ? "bg-base-100 shadow-sm" : ""}`}
+              className={`btn btn-sm btn-ghost gap-1 px-2 sm:px-3 whitespace-nowrap ${activeTab === "chat" ? "bg-base-100 shadow-sm" : ""}`}
             >
-              <MessageSquare className="w-4 h-4" /> Chat
+              <MessageSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Chat</span>
             </button>
             <button
               onClick={() => setActiveTab("tasks")}
-              className={`btn btn-sm btn-ghost gap-1 px-3 ${activeTab === "tasks" ? "bg-base-100 shadow-sm" : ""}`}
+              className={`btn btn-sm btn-ghost gap-1 px-2 sm:px-3 whitespace-nowrap ${activeTab === "tasks" ? "bg-base-100 shadow-sm" : ""}`}
             >
-              <CheckSquare className="w-4 h-4" /> Tasks
+              <CheckSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Tasks</span>
             </button>
             <button
               onClick={() => setActiveTab("code")}
-              className={`btn btn-sm btn-ghost gap-1 px-3 ${activeTab === "code" ? "bg-base-100 shadow-sm" : ""}`}
+              className={`btn btn-sm btn-ghost gap-1 px-2 sm:px-3 whitespace-nowrap ${activeTab === "code" ? "bg-base-100 shadow-sm" : ""}`}
             >
-              <Code2 className="w-4 h-4" /> Code
+              <Code2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Code</span>
             </button>
           </div>
 

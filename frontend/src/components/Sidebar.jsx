@@ -7,7 +7,7 @@ import toast from "react-hot-toast";
 import { axiosInstance } from "../lib/axios";
 import CreateGroupModal from "./CreateGroupModal";
 
-const Sidebar = () => {
+const Sidebar = ({ onSelectChat }) => {
   const {
     getUsers,
     users,
@@ -344,7 +344,10 @@ const Sidebar = () => {
             {filteredUsers.map((user) => (
               <button
                 key={user._id}
-                onClick={() => setSelectedUser(user)}
+                onClick={() => {
+                  setSelectedUser(user);
+                  onSelectChat?.();
+                }}
                 className={`
                   w-full p-3 flex items-center gap-3
                   hover:bg-base-300 transition-colors
@@ -388,7 +391,10 @@ const Sidebar = () => {
             {groups.map((group) => (
               <button
                 key={group._id}
-                onClick={() => setSelectedGroup(group)}
+                onClick={() => {
+                  setSelectedGroup(group);
+                  onSelectChat?.();
+                }}
                 className={`
                   w-full p-3 flex items-center gap-3
                   hover:bg-base-300 transition-colors

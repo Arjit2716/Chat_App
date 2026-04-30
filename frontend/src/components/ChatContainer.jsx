@@ -41,7 +41,7 @@ const MessageStatus = ({ status, isSent }) => {
   }
 };
 
-const ChatContainer = () => {
+const ChatContainer = ({ onBack }) => {
   const {
     messages,
     getMessages,
@@ -165,7 +165,7 @@ const ChatContainer = () => {
   if (isMessagesLoading) {
     return (
       <div className="flex-1 flex flex-col overflow-auto">
-        <ChatHeader />
+        <ChatHeader onBack={onBack} />
         <MessageSkeleton />
         <MessageInput />
       </div>
@@ -174,7 +174,7 @@ const ChatContainer = () => {
 
   return (
     <div className="flex-1 flex flex-col overflow-auto">
-      <ChatHeader />
+      <ChatHeader onBack={onBack} />
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* E2E encryption notice */}
